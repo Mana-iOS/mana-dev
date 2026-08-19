@@ -5,11 +5,13 @@
     "bundle-polyfills": "node scripts/bundle-polyfills.js"
   },
   "devDependencies": {
+    "base-64": "*",
     "buffer": "*",
     "esbuild": "*",
     "events": "*",
     "path-browserify": "*",
     "process": "*",
-    "util": "*"
+    "util": "*",
+    "whatwg-url-minimum": "*"
   }
 }

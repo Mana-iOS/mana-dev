@@ -227,7 +227,7 @@ func performBuild(config Config) BuildResult {
 		outputFiles = append(outputFiles, uniqueID+".js")
 	}
 
-	plugin, banner := nodeBuiltinsPlugin()
+	plugin, banner := runtimeCompatibilityPlugin()
 
 	// ESBuild configuration with entry points advanced
 	buildOptions := api.BuildOptions{
@@ -245,9 +245,9 @@ func performBuild(config Config) BuildResult {
 		Sourcemap:           api.SourceMapNone,
 		LogLevel:            api.LogLevelWarning,
 		LegalComments:       api.LegalCommentsNone,
-		GlobalName: "__exports__",
-		Footer:     map[string]string{"js": "globalThis.Target=__exports__.Target;"},
-		Banner:     map[string]string{"js": banner},
+		GlobalName:          "__exports__",
+		Footer:              map[string]string{"js": "globalThis.Target=__exports__.Target;"},
+		Banner:              map[string]string{"js": banner},
 		// Redirect Node.js built-in imports to pre-bundled browser polyfills
 		Plugins: []api.Plugin{plugin},
 	}
@@ -360,14 +360,14 @@ func outputResult(result BuildResult) {
 	fmt.Println(string(jsonData))
 }
 
-// nodeBuiltinsPlugin returns an esbuild plugin that redirects imports of known
-// Node built-ins to shims, plus the combined banner string to inject as Banner.
+// runtimeCompatibilityPlugin returns an esbuild plugin that redirects imports
+// of known Node built-ins to shims, plus the runtime polyfill banner.
 // The banner must be set directly on BuildOptions — setting it inside OnStart is too late.
-func nodeBuiltinsPlugin() (api.Plugin, string) {
-	order := []string{"buffer", "process", "events", "path", "util"}
+func runtimeCompatibilityPlugin() (api.Plugin, string) {
+	order := []string{"buffer", "process", "events", "path", "util", "url"}
 	var bannerParts []string
 	for _, name := range order {
-		if code, ok := nodePolyfills[name]; ok && code != "" {
+		if code, ok := runtimePolyfills[name]; ok && code != "" {
 			bannerParts = append(bannerParts, code)
 		}
 	}
