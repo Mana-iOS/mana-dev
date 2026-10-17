@@ -40,7 +40,7 @@ jobs:
           fi
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.rust_target }}
     needs: check-version
     if: needs.check-version.outputs.tag_exists != 'true'
     runs-on: ${{ matrix.os }}
@@ -112,7 +112,7 @@ jobs:
         run: cargo build --release --bin mana-dev --target ${{ matrix.rust_target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          RUSTFLAGS: "-C target-cpu=x86-64-v2 -C target-feature=+crt-static"
+          RUSTFLAGS: "-C target-cpu=${{ startsWith(matrix.rust_target, 'x86_64') && 'x86-64-v2' || 'generic' }} -C target-feature=+crt-static"
 
       # ── Go ────────────────────────────────────────────────────────────────
       - name: Install Go
