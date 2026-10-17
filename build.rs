@@ -1,4 +1,8 @@
 fn main() {
+    println!("cargo:rerun-if-changed=runtime/http.generated.js");
+    println!("cargo:rerun-if-changed=runtime/emulator.js");
+    println!("cargo:rerun-if-changed=runtime/target_processor.js");
+
     #[cfg(target_os = "windows")]
     {
         // Link Windows libraries required by V8

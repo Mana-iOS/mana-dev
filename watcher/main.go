@@ -230,6 +230,8 @@ func performBuild(config Config) BuildResult {
 	plugin, banner := runtimeCompatibilityPlugin()
 
 	// ESBuild configuration with entry points advanced
+	// Operation ownership follows Promise continuations, so native async must
+	// be lowered even when the requested JavaScript target supports it.
 	buildOptions := api.BuildOptions{
 		EntryPointsAdvanced: entryPoints,
 		Outdir:              tempOutput,
@@ -239,6 +241,7 @@ func performBuild(config Config) BuildResult {
 		MainFields:          []string{"browser", "module", "main"},
 		Format:              api.FormatIIFE,
 		Target:              getTarget(config.Target),
+		Supported:           operationScopeFeatures(),
 		MinifyWhitespace:    config.Minify,
 		MinifyIdentifiers:   false,
 		MinifySyntax:        config.Minify,
@@ -360,6 +363,41 @@ func outputResult(result BuildResult) {
 	fmt.Println(string(jsonData))
 }
 
+func operationScopeFeatures() map[string]bool {
+	return map[string]bool{
+		"async-await":     false,
+		"async-generator": false,
+		"for-await":       false,
+	}
+}
+
+// Functions serialized for WebViewPage.evaluate run in another realm. Include
+// the compiler's own async helpers there instead of depending on bundle locals.
+func serializedFunctionPrelude() string {
+	result := api.Transform(`var __manaPreludeEnd = [
+		async function(value) {
+			return await value;
+		},
+		async function*(value) {
+			yield* value;
+			for await (const item of value) {
+				yield await item;
+			}
+		}
+	];`, api.TransformOptions{
+		Target:    api.ESNext,
+		Supported: operationScopeFeatures(),
+	})
+
+	code := string(result.Code)
+	marker := strings.Index(code, "var __manaPreludeEnd =")
+	if len(result.Errors) > 0 || marker < 0 {
+		panic("Could not generate portable async function helpers")
+	}
+
+	return code[:marker]
+}
+
 // runtimeCompatibilityPlugin returns an esbuild plugin that redirects imports
 // of known Node built-ins to shims, plus the runtime polyfill banner.
 // The banner must be set directly on BuildOptions — setting it inside OnStart is too late.
@@ -371,6 +409,9 @@ func runtimeCompatibilityPlugin() (api.Plugin, string) {
 			bannerParts = append(bannerParts, code)
 		}
 	}
+
+	prelude, _ := json.Marshal(serializedFunctionPrelude())
+	bannerParts = append(bannerParts, "globalThis.__manaSerializedFunctionPrelude="+string(prelude)+";")
 	banner := strings.Join(bannerParts, "\n")
 
 	shimExports := map[string]string{

@@ -1,3 +1,4 @@
+static HTTP_CODE: &str = include_str!("../../../runtime/http.generated.js");
 static EMULATOR_CODE: &str = include_str!("../../../runtime/emulator.js");
 static TARGET_PROCESSOR_CODE: &str = include_str!("../../../runtime/target_processor.js");
 
@@ -11,6 +12,15 @@ pub fn get_target_processor_code() -> Option<&'static str> {
 
 /// Load emulator code and target processor into V8 scope
 pub fn load_emulator_in_scope(scope: &mut v8::ContextScope<v8::HandleScope>) -> anyhow::Result<()> {
+    // Install the exact same client implementation as the app before evaluating source code.
+    let http_code = v8::String::new(scope, HTTP_CODE)
+        .ok_or_else(|| anyhow::anyhow!("Failed to create shared HTTP runtime"))?;
+    let http_script = v8::Script::compile(scope, http_code, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to compile shared HTTP runtime"))?;
+    http_script
+        .run(scope)
+        .ok_or_else(|| anyhow::anyhow!("Failed to initialize shared HTTP runtime"))?;
+
     // Load the base emulator first (required)
     if let Some(emulator_code) = get_emulator_code() {
         let code = v8::String::new(scope, emulator_code)
@@ -76,6 +86,8 @@ pub fn load_emulator_in_scope(scope: &mut v8::ContextScope<v8::HandleScope>) -> 
 pub async fn bulk_build_emulator_native_standalone<F>(
     temp_files: Vec<(String, std::path::PathBuf)>,
     output_dir: &str,
+    repository_name: Option<&str>,
+    thumbnail: Option<&str>,
     delegate: F,
 ) -> anyhow::Result<serde_json::Value>
 where
@@ -91,11 +103,6 @@ where
     let output_path = PathBuf::from(output_dir);
     let sources_path = output_path.join("sources");
     std::fs::create_dir_all(&sources_path)?;
-
-    let (repository_name, thumbnail) = crate::MANA_CONFIG
-        .get()
-        .map(|(cfg, _)| (cfg.repository_name.as_deref(), cfg.thumbnail.as_deref()))
-        .unwrap_or((None, None));
 
     // Configure V8 thread pool exactly where it's executed
     let cpu_cores = std::thread::available_parallelism()

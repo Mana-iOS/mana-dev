@@ -576,7 +576,14 @@ async fn process_build_result(output_path: &PathBuf, build_result: &BuildResult)
     };
     
     // Use bulk emulator with delegate - files are copied individually during processing
-    match emulator::bulk_build_emulator_native_standalone(temp_files, output_path.to_str().unwrap(), delegate).await {
+    let metadata = MANA_CONFIG.get().map(|(cfg, _)| cfg);
+    match emulator::bulk_build_emulator_native_standalone(
+        temp_files,
+        output_path.to_str().unwrap(),
+        metadata.and_then(|cfg| cfg.repository_name.as_deref()),
+        metadata.and_then(|cfg| cfg.thumbnail.as_deref()),
+        delegate,
+    ).await {
         Ok(_metadata) => {
             // Metadata has been saved to metadata.json by the bulk emulator
         },

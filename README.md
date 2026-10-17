@@ -122,6 +122,7 @@ npm install -D @mana-app/types
 
 - [Rust](https://rustup.rs/) stable
 - [Go](https://go.dev/) 1.21+
+- Node.js and npm (for watcher polyfills)
 
 ### Build from source
 
@@ -130,7 +131,7 @@ npm install -D @mana-app/types
 cargo build --release --bin mana-dev
 
 # Build the Go watcher (mana-watcher)
-cd watcher && go build -o mana-watcher .
+(cd watcher && npm ci && npm run bundle-polyfills && go build -o ../target/release/mana-watcher .)
 ```
 
 ### Project layout

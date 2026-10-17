@@ -153,8 +153,34 @@ async fn build_command(no_repo: bool, folder: Option<String>, output: Option<Str
         println!("  - {}", entry.display());
     }
     
-    // Use native rolldown bulk bundling with self-contained IIFE configuration
-    v8::bulk_build_emulator_native_standalone(entry_points, &out_dir).await?;
+    // Bundle with the same watcher used by mana-dev, then evaluate metadata in V8.
+    let temp_files = bundle_source_files(&source_path, &out_dir).await?;
+    let temp_dir = Path::new(&out_dir).join(".mana-temp");
+    let expected_count = temp_files.len();
+    let delegate = move |
+        file_name: &str,
+        output_dir: &std::path::PathBuf,
+        metadata: &serde_json::Value,
+    | -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let target_name = metadata
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| format!("{}.mana", name))
+            .unwrap_or_else(|| file_name.replace(".js", ".mana"));
+        std::fs::copy(temp_dir.join(file_name), output_dir.join(target_name))?;
+        Ok(())
+    };
+    let metadata = v8::emulator::bulk_build_emulator_native_standalone(
+        temp_files,
+        &out_dir,
+        None,
+        None,
+        delegate,
+    )
+    .await?;
+    if metadata["sources"].as_array().map(Vec::len) != Some(expected_count) {
+        return Err(anyhow!("Failed to package all source entry points"));
+    }
     
     // Copy assets from project root (parent of src/), not from inside src/
     let src_abs = if Path::new(&source_path).is_absolute() {
@@ -170,8 +196,10 @@ async fn build_command(no_repo: bool, folder: Option<String>, output: Option<Str
         println!("📋 Copied assets directory");
     }
     
-    if !no_repo {
-        println!("📝 Repository generation skipped (not implemented yet)");
+    if no_repo {
+        tokio::fs::remove_file(Path::new(&out_dir).join("sources.json")).await?;
+    } else {
+        println!("📝 Generated repository metadata");
     }
     
         println!("✅ Build completed successfully!");
@@ -182,8 +210,16 @@ async fn build_command(no_repo: bool, folder: Option<String>, output: Option<Str
 pub async fn test_in_memory_bundling() -> Result<()> {
     println!("🧪 Testing in-memory bundling...");
     
-    // Bundle a TypeScript file directly into memory
-    match v8::build_emulator_in_memory("test_in_memory.ts", Some("test_bundle")).await {
+    // Use the current bundler before reading its standalone JavaScript output.
+    let output_dir = std::env::temp_dir().join(format!("mana-bench-{}", generate_uuid()));
+    let result: Result<String> = async {
+        let files = bundle_source_files("test_in_memory.ts", &output_dir.to_string_lossy()).await?;
+        let (_, path) = files.first().ok_or_else(|| anyhow!("No bundled output"))?;
+        Ok(tokio::fs::read_to_string(path).await?)
+    }.await;
+    let _ = tokio::fs::remove_dir_all(&output_dir).await;
+
+    match result {
         Ok(bundled_code) => {
             println!("✅ Successfully bundled in memory!");
             println!("📄 Bundled code size: {} bytes", bundled_code.len());
@@ -261,6 +297,57 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     }
     
     Ok(())
+}
+
+async fn bundle_source_files(
+    source_path: &str,
+    output_dir: &str,
+) -> Result<Vec<(String, std::path::PathBuf)>> {
+    let watcher = std::env::current_exe()?.with_file_name(if cfg!(windows) {
+        "mana-watcher.exe"
+    } else {
+        "mana-watcher"
+    });
+    let temp_dir = Path::new(output_dir).join(".mana-temp");
+    let output = tokio::process::Command::new(&watcher)
+        .arg("--source")
+        .arg(source_path)
+        .arg("--output")
+        .arg(output_dir)
+        .arg("--temp")
+        .arg(&temp_dir)
+        .output()
+        .await
+        .map_err(|error| anyhow!("Could not run {}: {}", watcher.display(), error))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Bundling failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let result = String::from_utf8(output.stdout)?
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .ok_or_else(|| anyhow!("Watcher returned no build result"))?;
+    if result["success"].as_bool() != Some(true) {
+        return Err(anyhow!("Bundling failed: {}", result["errors"]));
+    }
+
+    let files = result["files"]
+        .as_array()
+        .ok_or_else(|| anyhow!("Watcher returned no output files"))?;
+    files
+        .iter()
+        .map(|value| {
+            let name = value
+                .as_str()
+                .ok_or_else(|| anyhow!("Invalid bundled file name"))?;
+            Ok((name.to_string(), temp_dir.join(name)))
+        })
+        .collect()
 }
 
 fn generate_uuid() -> String {
